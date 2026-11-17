@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, now } from './db.js';
 import { env } from './env.js';
+import { desktopTempEnv } from './desktop-temp.js';
 
 const bridge = fileURLToPath(new URL('../box/hermes-desktop.py', import.meta.url));
 export interface DesktopStatus {
@@ -24,7 +25,8 @@ function childEnv(botId: string): NodeJS.ProcessEnv {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   // Hermes loads this bot's own model settings; do not inherit Bot HQ API keys.
   return { PATH: process.env.PATH, HOME: process.env.HOME, USER: process.env.USER,
-    LANG: process.env.LANG ?? 'C.UTF-8', HERMES_HOME: home, HERMES_SOURCE_DIR: env.hermesSourceDir };
+    LANG: process.env.LANG ?? 'C.UTF-8', HERMES_HOME: home, HERMES_SOURCE_DIR: env.hermesSourceDir,
+    ...desktopTempEnv(home) };
 }
 
 let python: Promise<string> | undefined;
@@ -61,12 +63,29 @@ export async function desktopRelay(botId: string, mode: 'watch' | 'control', vie
 }
 
 const starting = new Map<string, Promise<DesktopStatus>>();
+function repairBrowserLauncher(botId: string) {
+  // Existing desktops keep their session environment across app updates. Repair the dock too,
+  // so they gain the socket-safe temp directory without stopping the user's open applications.
+  const panel = path.join(localHome(botId), 'bot-desktop/xdg/xfce4/panel');
+  if (!fs.existsSync(panel)) return;
+  const temp = desktopTempEnv(localHome(botId));
+  const prefix = 'env ' + Object.entries(temp).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(' ') + ' ';
+  for (const entry of fs.readdirSync(panel, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('launcher-')) continue;
+    const file = path.join(panel, entry.name, 'hermes.desktop');
+    if (!fs.existsSync(file) || !fs.lstatSync(file).isFile()) continue;
+    const text = fs.readFileSync(file, 'utf8');
+    if (!/^Name=Browser$/m.test(text) || /^Exec=env TMPDIR=/m.test(text)) continue;
+    fs.writeFileSync(file, text.replace(/^Exec=(.*)$/m, (_, command) => 'Exec=' + prefix + command));
+  }
+}
 export function ensureLocalDesktop(userId: string, botId: string): Promise<DesktopStatus> {
   const pending = starting.get(botId);
   if (pending) return pending;
   const work = (async () => {
     const state = await desktopCommand(botId, 'start');
-    if (!state.running || !state.socket || !state.display) throw new Error('Hermes desktop did not start');
+    if (!state.running || !state.display) throw new Error('Hermes desktop did not start');
+    if (state.socket) repairBrowserLauncher(botId);
     const [width, height] = state.geometry.split('x').map(Number);
     db.prepare('INSERT OR REPLACE INTO screens(bot_id,user_id,screen_id,last_used_at,width,height) VALUES (?,?,?,?,?,?)')
       .run(botId, userId, `hermes-${botId}`, now(), width || null, height || null);

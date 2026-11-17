@@ -107,46 +107,50 @@ US$15/million characters, and batch STT at US$0.10/hour. Hermes task model
 usage, X search, and the app's xAI call summaries can add separate charges.
 Check [current pricing](https://docs.x.ai/developers/models) before use.
 
-## Open-source voice alternative: design, not yet implemented
+## Local voice in T3 + Bots
 
-A practical local pipeline is:
+The T3 frontend now supports local voice calls with automatic turn detection and
+interruption. Microphone audio stays in memory and is transcribed by faster-whisper
+base.en on CPU INT8; Kokoro ONNX generates speech locally. The existing Hermes model
+provider is unchanged. No xAI key or speech API is needed for this path.
 
-```text
-Microphone → faster-whisper (transcription) → existing Hermes bot
-           → text response → Kokoro (speech synthesis) → speakers
+Install the models through T3 bot settings or run:
+
+```sh
+LOCAL_VOICE_HOME="$HOME/.t3-bots/voice" node server/box/setup-local-voice.mjs
 ```
 
-| Option | Runs | Cost | Behavior and integration |
-| --- | --- | --- | --- |
-| Existing xAI voice | Hosted | Metered API usage | Already wired into Bot HQ; streaming conversation, turn detection, interruptions and tool handoff. Audio goes to xAI. |
-| faster-whisper + Kokoro + Hermes | Local speech models; Hermes model of your choice | No speech API fee; hardware/electricity and any hosted Hermes model still cost | Local speech processing. Start with push-to-talk, then add voice activity detection and interruption handling. Requires a new local call adapter. |
+Requires `uv` and initial internet downloads. Python dependencies have their own
+virtual environment. Kokoro and voice-file downloads are checksum verified. Models
+are shared across bots; each bot chooses its voice. The backend routes under
+`/api/voice/local` provide setup, status, warm-up, transcription and speech. The original
+Bot HQ web frontend keeps its existing optional xAI voice client.
 
-[faster-whisper](https://github.com/SYSTRAN/faster-whisper) is an MIT-licensed
-Whisper implementation with CPU INT8 and GPU options. Start with CPU INT8 on
-older GPUs unless the CUDA/CTranslate2 versions are confirmed compatible.
-[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is a small TTS model with
-Apache-licensed weights and multiple voices. Both can run locally after model
-downloads. Voice and language quality should be checked with your own audio.
+The T3 composer also supports owned file attachments and uploaded avatars. Images and
+text are supplied to Hermes; other originals remain in the bot library. The
+`read_uploaded_file` MCP tool lets a Docker or Discord agent retrieve an upload by ID.
 
-This is **not a drop-in realtime endpoint replacement**. The existing browser
-call code (`web/src/voice/call.ts`) expects xAI session events and function
-calls. A local implementation needs microphone upload/streaming, a local STT
-service, speech playback, and an adapter that submits requests to the existing
-Hermes chat and reads its responses. Call summaries must also stop calling
-xAI if you want the whole voice path independent of xAI. Native Hermes TTS
-settings alone do not rewire Bot HQ's voice UI.
+## Link an existing Discord/Hermes agent
 
-Voice is intentionally unchanged in this branch. If `XAI_API_KEY` is blank,
-voice endpoints return a configuration message while local chat/desktops
-continue to work. Composio app connections are separately optional through
-`COMPOSIO_API_KEY`.
+Run `node server/box/link-primary.mjs` after starting the packaged T3 + Bots app once,
+then `hermes gateway restart`. The explicit setup command backs up `.env` and
+`config.yaml`, enables an authenticated API on loopback port 8642, and adds the HQ MCP
+server. It preserves Discord credentials, persona, model settings and terminal backend.
+Choose **New bot → Connect Hermes** in T3. The linked profile retains its real memory
+and tools. Recent Discord history is imported read-only and provides app context;
+T3 chats are separate API conversations. From Discord the agent can use
+`read_team_messages` and `send_to_bot` to join team discussions.
+
+The desktop bridge supports both local Unix sockets and Hermes' native Docker stdio
+RFB stream. Removing a linked bot disconnects the app without deleting its Hermes home
+or stopping its Discord gateway.
 
 ## Verification
 
 ```bash
 npm run typecheck
 npm run build
-node --test tests/local-desktop.test.mjs
+node --test tests/local-desktop.test.mjs tests/chat-features.test.mjs
 ```
 
 The integration test uses a real Bot HQ server, SQLite, authentication,

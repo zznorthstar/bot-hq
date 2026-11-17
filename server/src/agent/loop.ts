@@ -6,6 +6,8 @@ import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
 import { engineFor } from '../engine.js';
+import { attachmentInput, messageAttachments } from '../chat-media.js';
+import { primaryConversationContext } from '../primary-mirror.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 
@@ -21,7 +23,7 @@ import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
  */
 
 export type Trigger =
-  | { type: 'user'; text: string }
+  | { type: 'user'; text: string; attachmentIds?: string[]; voice?: boolean }
   | { type: 'routine'; routineId: string; name: string; prompt: string }
   | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number }
   | { type: 'system'; text: string };
@@ -368,8 +370,8 @@ async function runTurn(botId: string, trigger: Trigger) {
       body: JSON.stringify({
         model: bot.model || 'hermes-agent',
         ...(bot.provider ? { provider: bot.provider } : {}),
-        input,
-        instructions: await instructionsFor(userId, botId),
+        input: trigger.type === 'user' ? attachmentInput(input, messageAttachments(botId, trigger.attachmentIds)) : input,
+        instructions: (await instructionsFor(userId, botId)) + (engine.kind === 'primary' ? primaryConversationContext() : '') + (trigger.type === 'user' && trigger.voice ? '\nYou are speaking on a live voice call. Reply naturally and briefly in plain text. Avoid markdown and long lists unless requested.' : ''),
         // One engine-side thread per conversation; "New chat" bumps the generation and starts another.
         conversation: `hq-${botId}-g${bot.generation}`,
         stream: true,

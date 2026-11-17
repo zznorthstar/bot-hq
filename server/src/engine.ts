@@ -8,6 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
+import { desktopTempEnv } from './desktop-temp.js';
 
 /**
  * Every bot is run by a Hermes agent.
@@ -314,6 +315,7 @@ async function startGateway(botId: string): Promise<void> {
       USER: process.env.USER ?? 'root',
       LANG: process.env.LANG ?? 'C.UTF-8',
       HERMES_HOME: home,
+      ...desktopTempEnv(home),
       HERMES_GATEWAY_LOCK_DIR: path.join(home, 'locks'),
       // Hermes' browser tool talks to a helper process it finds under this folder. With the default
       // (one folder per HOME) every agent on the computer would end up driving the same browser.

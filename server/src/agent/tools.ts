@@ -1,9 +1,10 @@
+import fs from 'node:fs';
 import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { box } from '../box.js';
 import { env } from '../env.js';
-import { appendRow, getBotRow, listRoutines, toRoutine, describeCron } from '../store.js';
+import { appendRow, getBotRow, listRows, listRoutines, toRoutine, describeCron } from '../store.js';
 import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '../composio.js';
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
 import { createEventRoutine, deleteEventTrigger, describeEvent, listTriggerTypes } from '../triggers.js';
@@ -269,6 +270,28 @@ export const TOOLS: ToolDef[] = [
       ctx.enqueueBotMessage(ctx.botId, target.id, String(a.message), ctx.depth + 1);
       return { output: `Sent to ${target.name}. Their reply will come back to you as a message.`, summary: `Messaged ${target.name}` };
     },
+  },
+  {
+    name: 'read_uploaded_file',
+    description: 'Read a file the user attached to your T3 + Bots chat. Works from Discord and Docker too. Use the attachment ID from read_team_messages. Text is returned directly; binary files return base64 with their MIME type.',
+    parameters: obj({ attachment_id: { type: 'string' } }, ['attachment_id']),
+    activity: 'working', label: 'Reading an attachment',
+    impl: async (a, ctx) => {
+      const file = db.prepare('SELECT name,mime,size,path FROM chat_attachments WHERE id=? AND bot_id=?').get(a.attachment_id, ctx.botId) as { name: string; mime: string; size: number; path: string } | undefined;
+      if (!file) return { output: 'This attachment is not available for this bot.' };
+      const data = fs.readFileSync(file.path);
+      if (file.mime.startsWith('text/') || /\.(md|txt|csv|json|yaml|yml|log|ts|js|py)$/i.test(file.name)) return { output: data.subarray(0, 100_000).toString('utf8') };
+      if (data.length > 1_000_000) return { output: 'This binary file is too large to return over chat. Use its library path on the local computer.' };
+      return { output: JSON.stringify({ name: file.name, mime: file.mime, data: data.toString('base64') }) };
+    },
+  },
+  {
+    name: 'read_team_messages',
+    description: 'Read your recent T3 + Bots conversation, including messages and questions from your teammates and the user. Use this from Discord when the user asks about team discussions. Read-only; does not send a Discord message.',
+    parameters: obj({}),
+    activity: 'working',
+    label: 'Reading team messages',
+    impl: async (_, ctx) => ({ output: JSON.stringify(listRows(ctx.botId, { limit: 30 }).filter(row => row.body.type === 'message').map(row => ({ seq: row.seq, ...row.body }))) }),
   },
   {
     name: 'create_group',

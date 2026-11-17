@@ -12,12 +12,24 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+test('browser temporary directories remain private and fit Chrome Unix sockets for deeply nested bots', async () => {
+  const { desktopTempEnv } = await import('../server/dist/desktop-temp.js');
+  const home = '/home/example/.t3-bots/bot-hq/engines/bot_' + 'a'.repeat(70);
+  const first = desktopTempEnv(home);
+  const second = desktopTempEnv(home + 'b');
+  assert.equal(first.TMPDIR, desktopTempEnv(home).TMPDIR);
+  assert.notEqual(first.TMPDIR, second.TMPDIR);
+  assert.ok(first.TMPDIR.length <= 50);
+  assert.equal((await fs.stat(first.TMPDIR)).mode & 0o777, 0o700);
+  await fs.rm(first.TMPDIR, { recursive: true });
+  await fs.rm(second.TMPDIR, { recursive: true });
+});
 async function until(fn) {
   for (let i = 0; i < 200; i++) { const value = await fn(); if (value) return value; await delay(25); }
   throw new Error('Timed out');
 }
 
-test('local backend starts without paid keys; authenticated viewer bridges RFB and honours watch/control', { timeout: 30_000 }, async () => {
+for (const sandbox of [false, true]) test(`local ${sandbox ? 'Docker stream' : 'Unix socket'} viewer authenticates and honours watch/control`, { timeout: 30_000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bot-hq-local-'));
   const source = path.join(root, 'source');
   const pkg = path.join(source, 'tools', 'bot_desktop');
@@ -26,16 +38,20 @@ test('local backend starts without paid keys; authenticated viewer bridges RFB a
   await fs.writeFile(path.join(pkg, '__init__.py'), '');
   await fs.writeFile(path.join(pkg, 'placement.py'), 'GATEWAY="gateway"\ndef resolve():\n return type("Placement", (), {"where": GATEWAY})()\n');
   await fs.writeFile(path.join(pkg, 'runtime.py'), `
-import os
+import os, subprocess, sys
 from pathlib import Path
 class State:
  running=True
- socket=os.environ['HERMES_HOME']+'/test.sock'
+ socket=None if os.path.exists(os.environ['HERMES_HOME']+'/sandbox') else os.environ['HERMES_HOME']+'/test.sock'
  def as_dict(self):
   return dict(supported=True, installed=True, running=True, display=':25', socket=self.socket, geometry='640x480', missing=[], install_command=None)
 def status(): return State()
 def start(): return State()
 def stop(): pass
+def _owned_sandbox_env(): return True
+def open_rfb_stream():
+ code = "import socket,os,selectors; s=socket.socket(socket.AF_UNIX); s.connect(os.environ['HERMES_HOME']+'/test.sock'); p=selectors.DefaultSelector(); p.register(s,1); p.register(0,1)\\nwhile True:\\n for key,_ in p.select():\\n  data=s.recv(65536) if key.fileobj is s else os.read(0,65536)\\n  if not data: raise SystemExit(0)\\n  if key.fileobj is s: os.write(1,data)\\n  else: s.sendall(data)"
+ return subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 def touch_activity(): Path(os.environ['HERMES_HOME']+'/activity').touch()
 `);
   await fs.writeFile(path.join(pkg, 'lease.py'), `
@@ -85,6 +101,7 @@ def viewer_may_send_input(viewer_id): return read()['viewer_id']==viewer_id
     assert.equal((await (await request(`/api/bots/${bot.id}/files`)).json()).status, 'ok');
     const home = path.join(root, 'engines', bot.id);
     await fs.mkdir(home, { recursive: true });
+    if (sandbox) await fs.writeFile(path.join(home, 'sandbox'), '1');
     const received = [];
     const upstream = net.createServer((sock) => {
       sockets.add(sock); sock.on('close', () => sockets.delete(sock));

@@ -11,6 +11,9 @@ export type AvatarColor =
 export interface User { id: string; email: string; name: string; avatarUrl: string | null }
 
 export interface Bot {
+  avatarVersion?: string | null;
+  localVoice?: string;
+  engineKind?: 'primary' | 'managed' | null;
   id: string;
   name: string;
   label: string;
@@ -63,10 +66,13 @@ export interface MessageBody {
   role: 'user' | 'assistant';
   text: string;
   streaming?: boolean;
+  attachments?: ChatAttachment[];
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
-  from?: { kind: 'bot' | 'routine' | 'voice'; id: string; name: string };
+  from?: { kind: 'bot' | 'routine' | 'voice' | 'discord'; id: string; name: string };
   citations?: { url: string; title?: string }[];
 }
+
+export interface ChatAttachment { id: string; name: string; mime: string; size: number }
 
 export interface ToolCallBody {
   type: 'tool-call';

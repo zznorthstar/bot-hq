@@ -18,9 +18,13 @@ import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
+import { chatMediaApi, messageAttachments } from './chat-media.js';
+import { localVoiceApi } from './local-voice.js';
+import { primaryApi } from './primary.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
+api.use('/primary/*', requireUser);
 
 const SHAPES: AvatarShape[] = ['blob', 'pebble', 'bean', 'egg', 'squircle', 'tablet', 'capsule', 'cylinder', 'hex', 'gem', 'crystal', 'wedge', 'shield', 'dome', 'arch', 'cloud', 'teardrop', 'leaf', 'square', 'sparkle', 'clover', 'flower', 'heart', 'house', 'star'];
 const COLORS: AvatarColor[] = ['black', 'brown', 'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'magenta', 'gray'];
@@ -194,7 +198,7 @@ api.patch('/bots/:id', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   const p = await c.req.json();
-  const cols: Record<string, string> = { name: 'name', label: 'label', description: 'description', instructions: 'instructions', avatarShape: 'avatar_shape', avatarColor: 'avatar_color', mode: 'mode', effort: 'effort', pinned: 'pinned', voice: 'voice', voiceSpeed: 'voice_speed', voiceLanguage: 'voice_language' };
+  const cols: Record<string, string> = { localVoice: 'local_voice', name: 'name', label: 'label', description: 'description', instructions: 'instructions', avatarShape: 'avatar_shape', avatarColor: 'avatar_color', mode: 'mode', effort: 'effort', pinned: 'pinned', voice: 'voice', voiceSpeed: 'voice_speed', voiceLanguage: 'voice_language' };
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
@@ -220,7 +224,7 @@ api.delete('/bots/:id', async (c) => {
   }
   if (b.kind !== 'room') {
     // Stop a native desktop before removing its Hermes home (which owns its PID and socket).
-    if (env.computerBackend === 'hermes') await releaseScreen(b.id);
+    if (env.computerBackend === 'hermes' && b.engine !== 'primary') await releaseScreen(b.id);
     await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
     if (env.computerBackend !== 'hermes') await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
     await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
@@ -260,13 +264,16 @@ api.get('/bots/:id/rows', (c) => {
 api.post('/bots/:id/messages', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const { text } = await c.req.json<{ text: string }>();
-  if (!text?.trim()) return c.json({ error: 'empty' }, 400);
-  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim() });
+  const { text = '', attachmentIds, voice = false } = await c.req.json<{ text?: string; attachmentIds?: string[]; voice?: boolean }>();
+  let files;
+  try { files = messageAttachments(b.id, attachmentIds); } catch { return c.json({ error: 'An attachment is unavailable' }, 400); }
+  if (!text?.trim() && !files.length) return c.json({ error: 'empty' }, 400);
+  const attachments = files.map(({ id, name, mime, size }) => ({ id, name, mime, size }));
+  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim(), ...(attachments.length ? { attachments } : {}), ...(voice ? { from: { kind: 'voice', id: 'local', name: 'Voice call' } as const } : {}) });
   // Group chats dispatch to their member Bots instead of running their own loop.
   if (b.kind === 'room') dispatchRoomMessage(b.id, text.trim(), enqueue);
   // Any pending question card is answered by a free-text message.
-  else enqueue(b.id, { type: 'user', text: text.trim() });
+  else enqueue(b.id, { type: 'user', text: text.trim(), attachmentIds: files.map(file => file.id), voice });
   return c.json({ row });
 });
 
@@ -473,4 +480,7 @@ api.delete('/policies/:tool', (c) => {
   return c.json({ ok: true });
 });
 
+api.route('/voice/local', localVoiceApi);
+api.route('/primary', primaryApi);
 api.route('/voice', voiceApi);
+api.route('/', chatMediaApi);

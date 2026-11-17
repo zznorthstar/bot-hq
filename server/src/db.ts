@@ -144,6 +144,18 @@ function addColumn(table: string, col: string, ddl: string) {
   if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
 }
 addColumn('bots', 'voice', "TEXT NOT NULL DEFAULT 'luna'");
+addColumn('bots', 'avatar_data', 'TEXT');
+addColumn('bots', 'avatar_version', 'TEXT');
+addColumn('bots', 'local_voice', "TEXT NOT NULL DEFAULT 'af_heart'");
+db.exec(`CREATE TABLE IF NOT EXISTS chat_attachments (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+)`);
 addColumn('bots', 'voice_speed', 'REAL NOT NULL DEFAULT 1');
 addColumn('bots', 'voice_language', "TEXT NOT NULL DEFAULT 'auto'");
 // Hermes engine: per-bot model choice, which engine runs the bot ('primary' = the existing agent,

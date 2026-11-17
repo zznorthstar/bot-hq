@@ -263,7 +263,8 @@ export async function releaseScreen(botId: string): Promise<void> {
   const mine = db.prepare('SELECT screen_id, user_id FROM screens WHERE bot_id=?').get(botId) as any;
   if (!mine) return;
   if (env.computerBackend === 'hermes') {
-    if (!isPrimaryEngine(botId)) await desktopCommand(botId, 'stop');
+    const kind = (db.prepare('SELECT engine FROM bots WHERE id=?').get(botId) as { engine: string } | undefined)?.engine;
+    if (kind === 'managed') await desktopCommand(botId, 'stop');
     db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
     hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
     return;

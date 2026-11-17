@@ -168,3 +168,21 @@ control handback and takeover by another viewer. It does not validate real
 Xfce rendering, model work or paid voice calls. Test those after installing
 the desktop prerequisites. This adapter uses Hermes' internal Bot Desktop
 Python API; changes to that API can require an adapter update.
+
+## Additional existing profiles
+
+Named Hermes profiles can be linked alongside the default agent. Configure a
+profile's authenticated loopback API first, then use its Connect action under
+New bot in T3. A standalone profile has its own gateway/API port; multiplexed
+profiles use the default gateway's `/p/<profile>` API. Each link resolves its own
+Hermes home, memory, soul, desktop and messaging transcript. Its HQ MCP URL/token
+must identify that bot, rather than the default `/mcp/primary` alias.
+
+The migration helper `server/box/migrate-telegram-profile.py` copies Telegram
+sessions/messages into a newly initialized native Hermes profile. It reads the
+source database only, rejects nonempty targets, preserves transcript rows and
+usage records, rekeys profile routing, clears stale resume/prompt pins, and checks
+foreign keys. Drain the old gateway and back up its files/database before moving
+the Telegram credentials; only one gateway may poll a given Telegram bot token.
+
+Verify migration with `python3 tests/migrate-telegram-profile.test.py`.

@@ -166,6 +166,8 @@ addColumn('bots', 'model', 'TEXT');
 addColumn('bots', 'provider', 'TEXT');
 addColumn('bots', 'engine', 'TEXT');
 addColumn('bots', 'engine_port', 'INTEGER');
+addColumn('bots', 'hermes_profile', 'TEXT');
+addColumn('bots', 'hermes_platform', 'TEXT');
 addColumn('bots', 'handback_at', 'INTEGER');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');

@@ -371,7 +371,7 @@ async function runTurn(botId: string, trigger: Trigger) {
         model: bot.model || 'hermes-agent',
         ...(bot.provider ? { provider: bot.provider } : {}),
         input: trigger.type === 'user' ? attachmentInput(input, messageAttachments(botId, trigger.attachmentIds)) : input,
-        instructions: (await instructionsFor(userId, botId)) + (engine.kind === 'primary' ? primaryConversationContext() : '') + (trigger.type === 'user' && trigger.voice ? '\nYou are speaking on a live voice call. Reply naturally and briefly in plain text. Avoid markdown and long lists unless requested.' : ''),
+        instructions: (await instructionsFor(userId, botId)) + (engine.kind === 'primary' || engine.kind === 'linked' ? primaryConversationContext(botId) : '') + (trigger.type === 'user' && trigger.voice ? '\nYou are speaking on a live voice call. Reply naturally and briefly in plain text. Avoid markdown and long lists unless requested.' : ''),
         // One engine-side thread per conversation; "New chat" bumps the generation and starts another.
         conversation: `hq-${botId}-g${bot.generation}`,
         stream: true,

@@ -16,7 +16,7 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   const bot = getBotRow(botId);
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as any;
   const owner = displayNameFor(userId);
-  const primaryEngine = bot.engine === 'primary';
+  const primaryEngine = bot.engine === 'primary' || bot.engine === 'linked';
 
   const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'room' ORDER BY created_at").all(userId, botId) as any[])
     .map((b) => `- ${b.name}${b.label ? ` (${b.label})` : ''}${b.is_primary ? ' [main point of contact]' : ''}`)

@@ -21,6 +21,7 @@ import { voiceApi } from './voice.js';
 import { chatMediaApi, messageAttachments } from './chat-media.js';
 import { localVoiceApi } from './local-voice.js';
 import { botSettingsApi } from './bot-settings.js';
+import { initPrimaryMirror } from './primary-mirror.js';
 import { primaryApi } from './primary.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
@@ -225,13 +226,14 @@ api.delete('/bots/:id', async (c) => {
   }
   if (b.kind !== 'room') {
     // Stop a native desktop before removing its Hermes home (which owns its PID and socket).
-    if (env.computerBackend === 'hermes' && b.engine !== 'primary') await releaseScreen(b.id);
+    if (env.computerBackend === 'hermes' && b.engine === 'managed') await releaseScreen(b.id);
     await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
     if (env.computerBackend !== 'hermes') await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
     await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
   }
   db.prepare('DELETE FROM screens WHERE bot_id=?').run(b.id);
   db.prepare('DELETE FROM bots WHERE id=?').run(b.id);
+  if (b.engine === 'primary' || b.engine === 'linked') initPrimaryMirror();
   hub.emit(c.get('user').id, { type: 'roster' });
   return c.json({ ok: true });
 });

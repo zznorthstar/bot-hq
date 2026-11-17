@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { engineHome } from './engine.js';
 import { db, now } from './db.js';
 import { env } from './env.js';
 import { desktopTempEnv } from './desktop-temp.js';
@@ -15,7 +16,7 @@ export interface DesktopStatus {
 export function localHome(botId: string): string {
   const bot = db.prepare('SELECT engine FROM bots WHERE id=?').get(botId) as { engine: string } | undefined;
   if (!bot) throw new Error('Bot not found');
-  if (bot.engine === 'primary') return env.hermesHome;
+  if (bot.engine === 'primary' || bot.engine === 'linked') { const home = engineHome(botId); if (!home) throw new Error('The linked Hermes profile is unavailable'); return home; }
   if (!/^bot_[\w-]+$/.test(botId)) throw new Error('Invalid bot ID');
   return path.join(env.enginesDir, botId);
 }

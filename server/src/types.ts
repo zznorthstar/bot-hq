@@ -13,7 +13,7 @@ export interface User { id: string; email: string; name: string; avatarUrl: stri
 export interface Bot {
   avatarVersion?: string | null;
   localVoice?: string;
-  engineKind?: 'primary' | 'managed' | null;
+  engineKind?: 'primary' | 'managed' | 'linked' | null;
   id: string;
   name: string;
   label: string;
@@ -68,7 +68,7 @@ export interface MessageBody {
   streaming?: boolean;
   attachments?: ChatAttachment[];
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
-  from?: { kind: 'bot' | 'routine' | 'voice' | 'discord'; id: string; name: string };
+  from?: { kind: 'bot' | 'routine' | 'voice' | 'discord' | 'telegram'; id: string; name: string };
   citations?: { url: string; title?: string }[];
 }
 

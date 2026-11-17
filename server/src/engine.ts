@@ -8,6 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
+import { externalProfile } from './external-profiles.js';
 import { displayNameFor } from './user-profile.js';
 import { desktopTempEnv } from './desktop-temp.js';
 
@@ -22,7 +23,7 @@ import { desktopTempEnv } from './desktop-temp.js';
  *   outside ~/.hermes, so Hermes treats it as a separate tenant beside the primary gateway.
  */
 
-export type EngineKind = 'primary' | 'managed';
+export type EngineKind = 'primary' | 'managed' | 'linked';
 export interface Engine { kind: EngineKind; url: string; key: string; home: string }
 
 const botRow = (botId: string) => db.prepare('SELECT * FROM bots WHERE id=?').get(botId) as any;
@@ -67,7 +68,7 @@ export function primaryBotId(): string | null {
 
 export function engineKind(botId: string): EngineKind | null {
   const e = botRow(botId)?.engine;
-  return e === 'primary' || e === 'managed' ? e : null;
+  return e === 'primary' || e === 'managed' || e === 'linked' ? e : null;
 }
 
 const homeFor = (botId: string) => path.join(env.enginesDir, botId);
@@ -92,7 +93,7 @@ function freePort(): number {
 export function assignEngine(botId: string): EngineKind {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
-  if (b.engine === 'primary' || b.engine === 'managed') return b.engine;
+  if (b.engine === 'primary' || b.engine === 'managed' || b.engine === 'linked') return b.engine;
   if (env.usePrimaryEngine && !primaryBotId()) {
     db.prepare("UPDATE bots SET engine='primary', engine_port=NULL WHERE id=?").run(botId);
     return 'primary';
@@ -382,6 +383,7 @@ export async function engineFor(botId: string): Promise<Engine> {
     kind = assignEngine(botId);
   }
   if (kind === 'primary') return { kind, url: env.hermesUrl, key: primaryKey(), home: env.hermesHome };
+  if (kind === 'linked') { const profile = externalProfile(botRow(botId).hermes_profile); return { kind, ...profile }; }
   const url = managedUrl(botId);
   if (!(await healthy(url, 1500)) || !managedKey(botId)) await ensureManaged(botId);
   return { kind, url, key: managedKey(botId), home: homeFor(botId) };
@@ -390,7 +392,7 @@ export async function engineFor(botId: string): Promise<Engine> {
 /** The bot's Hermes home, without starting anything (memory files, sign-in commands). */
 export function engineHome(botId: string): string | null {
   const kind = engineKind(botId);
-  return kind === 'primary' ? env.hermesHome : kind === 'managed' ? homeFor(botId) : null;
+  return kind === 'primary' ? env.hermesHome : kind === 'linked' ? externalProfile(botRow(botId).hermes_profile).home : kind === 'managed' ? homeFor(botId) : null;
 }
 
 /**
@@ -442,6 +444,7 @@ export async function restartEngine(botId: string): Promise<void> {
 
 /** The bot is gone: stop its gateway and delete its home. The primary agent is left alone. */
 export async function removeEngine(botId: string): Promise<void> {
+  if (engineKind(botId) !== 'managed') return;
   const home = homeFor(botId);
   if (!fs.existsSync(home)) return;
   await starting.get(botId)?.catch(() => {});
@@ -503,11 +506,12 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   const kind = engineKind(botId);
-  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: env.computerBackend !== 'hermes' && kind ? ownScreenOn(botId) : false };
+  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : kind === 'linked' ? b.hermes_profile : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: env.computerBackend !== 'hermes' && kind ? ownScreenOn(botId) : false };
   if (!kind) return { ...base, status: 'error', error: 'This bot has no agent.' };
 
   let e: { url: string; key: string };
   if (kind === 'primary') e = { url: env.hermesUrl, key: primaryKey() };
+  else if (kind === 'linked') e = externalProfile(b.hermes_profile);
   else {
     if (!b.engine_port) return { ...base, status: 'error', error: 'No port assigned.' };
     e = { url: managedUrl(botId), key: managedKey(botId) };
@@ -515,7 +519,7 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
 
   const health = await healthy(e.url);
   if (!health) {
-    if (kind === 'primary') return { ...base, status: 'error', error: `The agent at ${env.hermesUrl} is not answering.` };
+    if (kind === 'primary' || kind === 'linked') return { ...base, status: 'error', error: `The existing Hermes agent is not answering.` };
     if (starting.has(botId)) return { ...base, status: 'starting' };
     const failed = failures.get(botId);
     if (failed) return { ...base, status: 'error', error: failed };

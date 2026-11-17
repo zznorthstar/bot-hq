@@ -12,6 +12,7 @@ import { computerState, readyScreen, resetBotScreen } from './computer.js';
 import { box } from './box.js';
 import { orgo } from './orgo.js';
 import { openTerminal } from './desk.js';
+import { desktopCommand } from './local-desktop.js';
 import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen } from './engine.js';
 import { listMemories } from './engine-memory.js';
 import { idleConfig, viewerCount } from './idle.js';
@@ -154,7 +155,9 @@ configApi.post('/bots/:id/engine/login', async (c) => {
   const cmd = !provider ? `${hermes} model` : `${hermes} auth add ${provider}${provider === 'anthropic' ? ' --type oauth' : ''}`;
   try {
     const s = await readyScreen(user.id, b.id);
-    await openTerminal(s.screenId, cmd, provider ? `Sign in: ${provider}` : 'Choose a model');
+    if (env.computerBackend === 'hermes') {
+      await desktopCommand(b.id, 'terminal', [cmd, provider ? `Sign in: ${provider}` : 'Choose a model']);
+    } else await openTerminal(s.screenId, cmd, provider ? `Sign in: ${provider}` : 'Choose a model');
     forgetEngineOptions(b.id);
     return c.json({ ok: true });
   } catch (e: any) {
@@ -180,6 +183,7 @@ configApi.post('/bots/:id/engine/restart', async (c) => {
 configApi.post('/bots/:id/engine/screen/stop', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
+  if (env.computerBackend === 'hermes') return c.json({ error: 'This Hermes desktop is the screen shown in Bot HQ. Use Reset computer to restart it.' }, 409);
   try {
     await stopOwnScreen(b.id);
     return c.json({ engine: await engineInfo(b.id) });
@@ -198,7 +202,7 @@ configApi.post('/bots/:id/handback', (c) => {
 
 // ---------- library: files under /root/grokbot/files/<botId> on the bot's computer ----------
 
-const LIB_ROOT = '/root/grokbot/files';
+const LIB_ROOT = env.libraryRoot;
 
 function safeRel(p: string | undefined): string | null {
   const rel = (p ?? '').replace(/^\/+|\/+$/g, '');

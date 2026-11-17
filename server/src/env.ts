@@ -14,19 +14,22 @@ function secret(name: string): string {
   if (direct) return direct;
   const file = process.env[`${name}_FILE`];
   if (file) return fs.readFileSync(file, 'utf8').trim();
-  throw new Error(`Missing env ${name} (or ${name}_FILE)`);
+  return '';
 }
 
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
+const computerBackend = process.env.COMPUTER_BACKEND ?? 'orgo';
+if (!['orgo', 'hermes'].includes(computerBackend)) throw new Error('COMPUTER_BACKEND must be orgo or hermes');
 
 export const env = {
   port: Number(process.env.PORT ?? 8787),
+  host: process.env.HOST ?? '127.0.0.1',
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   /** Public URL of this server, used for OAuth callbacks. */
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
-  xaiKey: req('XAI_API_KEY'),
+  xaiKey: process.env.XAI_API_KEY ?? '',
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
-  composioKey: req('COMPOSIO_API_KEY'),
+  composioKey: process.env.COMPOSIO_API_KEY ?? '',
   orgoKey: secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),
   devLogin: process.env.DEV_LOGIN === '1',
@@ -35,6 +38,8 @@ export const env = {
   // ---- Hermes engine ----
   /** The `hermes` CLI used to start a gateway for each extra bot. */
   hermesBin: process.env.HERMES_BIN ?? 'hermes',
+  hermesPython: process.env.HERMES_PYTHON ?? '',
+  hermesSourceDir: process.env.HERMES_SOURCE_DIR ?? path.join(os.homedir(), '.hermes', 'hermes-agent'),
   /** The primary bot's Hermes home and API server (an agent that already runs; never restarted by us). */
   hermesHome,
   hermesUrl: (process.env.HERMES_URL ?? 'http://127.0.0.1:8642').replace(/\/+$/, ''),
@@ -50,10 +55,13 @@ export const env = {
   primaryBotLabel: process.env.PRIMARY_BOT_LABEL ?? 'Chief of Staff',
 
   // ---- the one shared computer ----
+  computerBackend,
+  usePrimaryEngine: process.env.USE_PRIMARY_ENGINE === undefined ? computerBackend !== 'hermes' : process.env.USE_PRIMARY_ENGINE === '1',
+  libraryRoot: process.env.LIBRARY_ROOT ?? (computerBackend === 'hermes' ? new URL('../../data/files', import.meta.url).pathname : '/root/grokbot/files'),
   /** The Orgo computer every bot works on (one screen each). Empty = legacy one-box-per-user mode is not supported. */
   orgoComputerId: process.env.ORGO_COMPUTER_ID ?? '',
   /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
-  localBox: process.env.HQ_LOCAL === '1',
+  localBox: computerBackend === 'hermes' || process.env.HQ_LOCAL === '1',
   /**
    * DevTools URL of a Chrome that already runs on the default screen and belongs to the primary bot
    * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.

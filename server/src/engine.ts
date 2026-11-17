@@ -91,7 +91,7 @@ export function assignEngine(botId: string): EngineKind {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   if (b.engine === 'primary' || b.engine === 'managed') return b.engine;
-  if (!primaryBotId()) {
+  if (env.usePrimaryEngine && !primaryBotId()) {
     db.prepare("UPDATE bots SET engine='primary', engine_port=NULL WHERE id=?").run(botId);
     return 'primary';
   }
@@ -153,7 +153,7 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
   // Its screen decides which display and which Chrome it drives. Only meaningful on the computer itself.
   let display: string | null = null;
   let cdp = '';
-  if (env.localBox) {
+  if (env.localBox && env.computerBackend !== 'hermes') {
     try {
       const s = await screenFor(b.user_id, botId);
       display = displayFor(s.screenId);
@@ -163,7 +163,7 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
     }
   }
 
-  const cwd = env.localBox ? `/root/grokbot/files/${botId}` : path.join(home, 'workspace');
+  const cwd = env.localBox ? path.join(env.libraryRoot, botId) : path.join(home, 'workspace');
   fs.mkdirSync(cwd, { recursive: true });
 
   const cfgFile = path.join(home, 'config.yaml');
@@ -174,8 +174,14 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
     for (const k of SHARED_CONFIG) if (primary[k] !== undefined) cfg[k] = primary[k];
     cfg.agent = { reasoning_effort: 'medium' };
   }
-  cfg.platform_toolsets = { ...(cfg.platform_toolsets ?? {}), api_server: ['hermes-api-server', ...(display ? ['computer_use'] : [])] };
+  cfg.platform_toolsets = { ...(cfg.platform_toolsets ?? {}), api_server: ['hermes-api-server', ...(display || env.computerBackend === 'hermes' ? ['computer_use'] : [])] };
   cfg.terminal = { ...(cfg.terminal ?? {}), cwd };
+  if (env.computerBackend === 'hermes') {
+    cfg.terminal.backend = 'local';
+    cfg.bot_desktop = { ...(cfg.bot_desktop ?? {}), auto_start: true, placement: 'gateway' };
+    cfg.browser = { ...(cfg.browser ?? {}) };
+    delete cfg.browser.cdp_url;
+  }
   if (cdp) cfg.browser = { ...(cfg.browser ?? {}), cdp_url: cdp };
   cfg.mcp_servers = {
     ...(cfg.mcp_servers ?? {}),
@@ -480,7 +486,7 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   const kind = engineKind(botId);
-  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: kind ? ownScreenOn(botId) : false };
+  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: env.computerBackend !== 'hermes' && kind ? ownScreenOn(botId) : false };
   if (!kind) return { ...base, status: 'error', error: 'This bot has no agent.' };
 
   let e: { url: string; key: string };

@@ -4,10 +4,20 @@ import { db } from './db.js';
 import { env } from './env.js';
 import type { Toolkit } from './types.js';
 
-export const composio = new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() });
+// Construct only when a configured connection is actually requested.
+let client: Composio<OpenAIResponsesProvider> | undefined;
+export const composio = new Proxy({} as Composio<OpenAIResponsesProvider>, {
+  get(_target, key) {
+    if (!env.composioKey) throw new Error('Connected apps require COMPOSIO_API_KEY');
+    client ??= new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() });
+    const value = Reflect.get(client, key);
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
 
 const REST = 'https://backend.composio.dev/api/v3.1';
 async function rest<T = any>(path: string): Promise<T> {
+  if (!env.composioKey) throw new Error('Connected apps require COMPOSIO_API_KEY');
   const res = await fetch(`${REST}${path}`, { headers: { 'x-api-key': env.composioKey } });
   if (!res.ok) throw new Error(`Composio ${path}: ${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
@@ -19,6 +29,7 @@ type CatalogItem = Omit<Toolkit, 'connected'>;
 let catalogCache: { at: number; items: CatalogItem[] } | null = null;
 
 export async function catalog(): Promise<CatalogItem[]> {
+  if (!env.composioKey) return [];
   if (catalogCache && Date.now() - catalogCache.at < 3600_000) return catalogCache.items;
   const items: CatalogItem[] = [];
   let cursor: string | undefined;
@@ -49,12 +60,14 @@ export async function toolkitInfo(slug: string): Promise<CatalogItem | undefined
 // ---------- per-user connections ----------
 
 export async function connectedToolkits(userId: string): Promise<Set<string>> {
+  if (!env.composioKey) return new Set();
   const r = await composio.connectedAccounts.list({ userIds: [userId], statuses: ['ACTIVE'] } as any);
   const items: any[] = (r as any).items ?? [];
   return new Set(items.map((i) => i.toolkit?.slug ?? i.toolkitSlug).filter(Boolean));
 }
 
 export async function connectionsDetail(userId: string) {
+  if (!env.composioKey) return [];
   const r = await composio.connectedAccounts.list({ userIds: [userId] } as any);
   return ((r as any).items ?? []).map((i: any) => ({ id: i.id, toolkit: i.toolkit?.slug ?? i.toolkitSlug, status: i.status }));
 }
@@ -71,6 +84,7 @@ export async function disconnect(userId: string, toolkit: string) {
 const sessionCache = new Map<string, any>();
 
 export async function sessionFor(userId: string): Promise<any> {
+  if (!env.composioKey) throw new Error('Connected apps require COMPOSIO_API_KEY');
   const cached = sessionCache.get(userId);
   if (cached) return cached;
   const row = db.prepare('SELECT session_id FROM composio_sessions WHERE user_id=?').get(userId) as any;

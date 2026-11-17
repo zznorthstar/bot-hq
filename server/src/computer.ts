@@ -5,6 +5,9 @@ import { orgo, OrgoError, type OrgoScreen } from './orgo.js';
 import { cdpPortFor, dressScreen, resetScreen, undressScreen, type DeskBot } from './desk.js';
 import { box } from './box.js';
 import type { ComputerState } from './types.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { desktopCommand, ensureLocalDesktop } from './local-desktop.js';
 
 /**
  * One Orgo computer for the whole team (ORGO_COMPUTER_ID), one screen per bot. The primary bot's
@@ -14,11 +17,12 @@ import type { ComputerState } from './types.js';
  */
 
 /** Orgo allows this many screens on one Linux computer, the default one included. */
-export const MAX_SCREENS = 4;
+export const MAX_SCREENS = env.computerBackend === 'hermes' ? env.maxBots : 4;
 
 export interface BotScreen { computerId: string; screenId: string; width?: number; height?: number }
 
 function computerId(): string {
+  if (env.computerBackend === 'hermes') return 'hermes-local';
   if (!env.orgoComputerId) throw new Error('ORGO_COMPUTER_ID is not set, so there is no computer for the bots to use.');
   return env.orgoComputerId;
 }
@@ -75,6 +79,10 @@ let inflight: Promise<string> | null = null;
 /** Make sure the shared computer is awake. Returns its Orgo id. */
 export function ensureComputer(userId: string): Promise<string> {
   const id = computerId();
+  if (env.computerBackend === 'hermes') {
+    setStatus(userId, 'running');
+    return Promise.resolve(id);
+  }
   if (Date.now() - checkedAt < 30_000) return Promise.resolve(id);
   if (inflight) return inflight;
   inflight = (async () => {
@@ -141,6 +149,17 @@ export function screenFor(userId: string, botId: string): Promise<BotScreen> {
 
 async function lease(userId: string, botId: string): Promise<BotScreen> {
   const id = await ensureComputer(userId);
+  if (env.computerBackend === 'hermes') {
+    try {
+      const state = await ensureLocalDesktop(userId, botId);
+      const [width, height] = state.geometry.split('x').map(Number);
+      hub.emit(userId, { type: 'computer', state: computerState(userId) });
+      return { computerId: id, screenId: `hermes-${botId}`, width, height };
+    } catch (e: any) {
+      setStatus(userId, 'error', String(e?.message ?? e));
+      throw e;
+    }
+  }
   const mine = db.prepare('SELECT screen_id, width, height FROM screens WHERE bot_id=?').get(botId) as any;
   if (mine) {
     const fresh = Date.now() - (verified.get(botId) ?? 0) < 120_000;
@@ -186,6 +205,7 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
  */
 export async function readyScreen(userId: string, botId: string, opts: { redress?: boolean } = {}): Promise<BotScreen> {
   const s = await screenFor(userId, botId);
+  if (env.computerBackend === 'hermes') return s;
   if (opts.redress) dressing.delete(botId);
   let d = dressing.get(botId);
   if (!d) {
@@ -213,6 +233,7 @@ export function cdpUrlFor(botId: string, screenId: string): string {
  * answers. Without this a bot's first turn finds no browser and goes off to start one of its own.
  */
 export async function screenForWork(userId: string, botId: string): Promise<void> {
+  if (env.computerBackend === 'hermes') { await readyScreen(userId, botId); return; }
   if (!env.orgoComputerId) return;
   if (!managesChrome(botId)) {
     // It brings its own browser, so nothing it needs depends on the dressing: don't make it wait.
@@ -227,6 +248,11 @@ export async function screenForWork(userId: string, botId: string): Promise<void
 
 /** Close everything on the bot's screen and bring its browser back to the home screen. Logins stay. */
 export async function resetBotScreen(userId: string, botId: string): Promise<void> {
+  if (env.computerBackend === 'hermes') {
+    await desktopCommand(botId, 'stop');
+    await screenFor(userId, botId);
+    return;
+  }
   const s = await screenFor(userId, botId);
   const bot = deskBot(botId);
   if (bot) await resetScreen(bot, s.screenId, { manageChrome: managesChrome(botId) });
@@ -236,6 +262,12 @@ export async function resetBotScreen(userId: string, botId: string): Promise<voi
 export async function releaseScreen(botId: string): Promise<void> {
   const mine = db.prepare('SELECT screen_id, user_id FROM screens WHERE bot_id=?').get(botId) as any;
   if (!mine) return;
+  if (env.computerBackend === 'hermes') {
+    if (!isPrimaryEngine(botId)) await desktopCommand(botId, 'stop');
+    db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
+    hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
+    return;
+  }
   db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
   dressing.delete(botId);
   verified.delete(botId);
@@ -248,6 +280,10 @@ export async function releaseScreen(botId: string): Promise<void> {
 /** A deleted bot leaves nothing behind on the computer: its browser profile and its Library folder go. */
 export async function forgetBotFiles(botId: string): Promise<void> {
   if (!/^bot_[\w-]+$/.test(botId)) return;
+  if (env.computerBackend === 'hermes') {
+    await fs.rm(path.join(env.libraryRoot, botId), { recursive: true, force: true });
+    return;
+  }
   await box.bash(`rm -rf -- /root/grokbot/profiles/${botId} /root/grokbot/files/${botId}`, 60);
 }
 
@@ -256,6 +292,10 @@ export async function suspendComputer(_userId: string, _reason = 'manual'): Prom
 
 /** Refresh status and screen sizes from Orgo (cheap; used when the UI opens). */
 export async function refreshComputer(userId: string): Promise<ComputerState> {
+  if (env.computerBackend === 'hermes') {
+    setStatus(userId, 'running');
+    return computerState(userId);
+  }
   if (!env.orgoComputerId) {
     setStatus(userId, 'error', 'ORGO_COMPUTER_ID is not set.');
     return computerState(userId);

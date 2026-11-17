@@ -6,6 +6,9 @@ import { vncAuthResponse } from './lib/des.js';
 import { orgo } from './orgo.js';
 import { readyScreen, screenFor } from './computer.js';
 import { viewerClosed, viewerOpened } from './idle.js';
+import crypto from 'node:crypto';
+import { desktopRelay } from './local-desktop.js';
+import { env } from './env.js';
 
 /**
  * VNC relay: browser <-> our server <-> Orgo websockify.
@@ -140,7 +143,7 @@ export function attachVncRelay(server: Server) {
 async function relay(client: WebSocket, userId: string, botId: string, mode: 'watch' | 'control') {
   const fromClient = new ByteQueue();
   const fromUp = new ByteQueue();
-  let upstream: WebSocket | null = null;
+  let upstream: { send: (b: Buffer) => void; close: () => void } | null = null;
   let piping = false;
   const filter = new WatchFilter();
   const closeAll = (code = 1000, reason = '') => {
@@ -151,7 +154,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('message', (data: Buffer) => {
     if (!piping) return fromClient.push(Buffer.from(data));
     const fwd = mode === 'watch' ? filter.feed(Buffer.from(data)) : Buffer.from(data);
-    if (fwd.length && upstream?.readyState === WebSocket.OPEN) upstream.send(fwd);
+    if (fwd.length) upstream?.send(fwd);
   });
   client.on('close', () => { viewerClosed(userId); fromClient.close(new Error('client closed')); try { upstream?.close(); } catch { /* */ } });
   viewerOpened(userId); // keeps the computer awake while someone is watching (see idle.ts)
@@ -160,16 +163,32 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const { computerId, screenId } = await screenFor(userId, botId);
     // A screen nobody has used yet is bare; set it up while the person is already watching.
     readyScreen(userId, botId).catch(() => {});
-    const { password } = await orgo.vncPassword(computerId);
-    const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
-    upstream = new WebSocket(upUrl, ['binary']);
-    upstream.on('message', (data: Buffer) => {
+    const receive = (data: Buffer) => {
       if (!piping) return fromUp.push(Buffer.from(data));
       if (client.readyState === WebSocket.OPEN) client.send(data);
-    });
-    upstream.on('close', (code, reason) => { fromUp.close(new Error(`upstream closed ${code}`)); closeAll(1000, `upstream ${code} ${reason}`); });
-    upstream.on('error', (e) => { fromUp.close(e as Error); closeAll(1011, String(e)); });
-    await new Promise<void>((res, rej) => { upstream!.once('open', () => res()); upstream!.once('error', rej); });
+    };
+    let password = '';
+    if (client.readyState !== WebSocket.OPEN) return;
+    if (env.computerBackend === 'hermes') {
+      const child = await desktopRelay(botId, mode, `hq-${crypto.randomUUID()}`);
+      if (client.readyState !== WebSocket.OPEN) { child.kill('SIGTERM'); return; }
+      upstream = { send: (b) => { child.stdin.write(b); }, close: () => { child.stdin.end(); child.kill('SIGTERM'); } };
+      child.stdout.on('data', receive);
+      let error = '';
+      child.stderr.on('data', (data: Buffer) => { error = (error + data.toString()).slice(-1000); });
+      child.on('exit', () => { fromUp.close(new Error(error || 'Hermes viewer closed')); closeAll(1000, error); });
+      child.on('error', (e) => { fromUp.close(e); closeAll(1011, e.message); });
+      child.stdin.on('error', (e) => { fromUp.close(e); closeAll(1011, e.message); });
+    } else {
+      ({ password } = await orgo.vncPassword(computerId));
+      const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
+      const ws = new WebSocket(upUrl, ['binary']);
+      upstream = ws;
+      ws.on('message', (data: Buffer) => receive(data));
+      ws.on('close', (code, reason) => { fromUp.close(new Error(`upstream closed ${code}`)); closeAll(1000, `upstream ${code} ${reason}`); });
+      ws.on('error', (e) => { fromUp.close(e as Error); closeAll(1011, String(e)); });
+      await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+    }
 
     const serverInit = await upstreamHandshake(fromUp, (b) => upstream!.send(b), password);
     await browserHandshake(fromClient, (b) => client.send(b), serverInit);

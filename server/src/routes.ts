@@ -12,6 +12,7 @@ import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComp
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
+import { desktopCommand } from './local-desktop.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
@@ -218,8 +219,10 @@ api.delete('/bots/:id', async (c) => {
     await deleteEventTrigger(r.id).catch(() => {});
   }
   if (b.kind !== 'room') {
+    // Stop a native desktop before removing its Hermes home (which owns its PID and socket).
+    if (env.computerBackend === 'hermes') await releaseScreen(b.id);
     await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
-    await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
+    if (env.computerBackend !== 'hermes') await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
     await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
   }
   db.prepare('DELETE FROM screens WHERE bot_id=?').run(b.id);
@@ -389,6 +392,13 @@ api.get('/bots/:id/screenshot', async (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
+  if (env.computerBackend === 'hermes') {
+    try {
+      const { image } = await desktopCommand<{ image: string | null }>(b.id, 'screenshot');
+      if (!image) return c.body(null, 204);
+      return c.body(Buffer.from(image.replace(/^data:[^,]+,/, ''), 'base64'), 200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' });
+    } catch { return c.body(null, 204); }
+  }
   const scr = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(b.id) as any;
   if (!env.orgoComputerId || computerState(user.id).status !== 'running' || !scr) return c.body(null, 204);
   try {

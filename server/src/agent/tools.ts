@@ -46,6 +46,7 @@ function botByName(userId: string, name: string) {
 
 /** Live X research through xAI's search tool. Returns the answer text followed by the posts it cites. */
 async function xSearch(a: any): Promise<string> {
+  if (!env.xaiKey) throw new Error('Research on X requires XAI_API_KEY');
   const clean = (v: unknown) => (Array.isArray(v) ? v.map((h) => String(h).replace(/^@/, '').trim()).filter(Boolean).slice(0, 10) : []);
   const tool: Record<string, unknown> = { type: 'x_search' };
   const only = clean(a.handles);
@@ -87,12 +88,12 @@ async function xSearch(a: any): Promise<string> {
 }
 
 /** Where each bot's Library lives on the shared computer. */
-export const LIBRARY_ROOT = '/root/grokbot/files';
+export const LIBRARY_ROOT = env.libraryRoot;
 
 export const TOOLS: ToolDef[] = [
   {
     name: 'save_file',
-    description: "Save a finished deliverable (report, notes, CSV, code, markdown) to your Library so the user can open and download it. Saved under /root/grokbot/files/<your id>/ on your computer. Files you write into that folder yourself show up in the Library too.",
+    description: `Save a finished deliverable (report, notes, CSV, code, markdown) to your Library so the user can open and download it. Saved under ${LIBRARY_ROOT}/<your id>/ on your computer. Files you write into that folder yourself show up in the Library too.`,
     parameters: obj({ filename: { type: 'string', description: 'e.g. briefing-2026-11-09.md' }, content: { type: 'string' } }, ['filename', 'content']),
     activity: 'drafting_file',
     label: 'Saving a file',

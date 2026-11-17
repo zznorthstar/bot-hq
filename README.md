@@ -1,3 +1,7 @@
+> **Local desktop fork:** This fork adds separate Hermes desktops on your Linux PC,
+> without Orgo. Start with [Local setup and voice comparison](docs/LOCAL_SETUP.md).
+> Voice remains the original optional xAI integration. The upstream description follows.
+
 <p align="center">
   <img src="assets/readme-banner.svg" alt="Bot HQ. Your team. Their own computers." width="100%">
 </p>

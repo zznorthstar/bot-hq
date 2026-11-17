@@ -8,8 +8,10 @@ import { Hono } from 'hono';
 import Database from 'better-sqlite3';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-chat-features-'));
-Object.assign(process.env, { SESSION_SECRET: 'private-test-secret', COMPUTER_BACKEND: 'hermes', USE_PRIMARY_ENGINE: '0', DB_PATH: path.join(root, 'hq.db'), LIBRARY_ROOT: path.join(root, 'files'), HERMES_HOME_PRIMARY: path.join(root, 'hermes'), LOCAL_VOICE_HOME: path.join(root, 'voice'), HERMES_URL: 'http://127.0.0.1:1', HERMES_KEY: '' });
+Object.assign(process.env, { SESSION_SECRET: 'private-test-secret', COMPUTER_BACKEND: 'hermes', USE_PRIMARY_ENGINE: '0', DB_PATH: path.join(root, 'hq.db'), ENGINES_DIR: path.join(root, 'engines'), LIBRARY_ROOT: path.join(root, 'files'), HERMES_HOME_PRIMARY: path.join(root, 'hermes'), LOCAL_VOICE_HOME: path.join(root, 'voice'), HERMES_URL: 'http://127.0.0.1:1', HERMES_KEY: '' });
 const { db } = await import('../server/dist/db.js');
+(await import('../server/dist/agent/subagents.js')).initSubagents();
+(await import('../server/dist/agent/rooms.js')).initRooms();
 const { chatMediaApi, messageAttachments, attachmentInput } = await import('../server/dist/chat-media.js');
 const { localVoiceApi } = await import('../server/dist/local-voice.js');
 const { primaryApi } = await import('../server/dist/primary.js');
@@ -82,4 +84,44 @@ test('mounted local speech routes require auth and bypass the hosted voice key g
   const response = await mounted.request('/api/voice/local/status', { headers: { cookie: 'grokbot_session=test-cookie' } });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).voice.provider, 'local');
+});
+
+const settingsRequest = async (url, body, method = 'POST') => {
+  const { api } = await import('../server/dist/routes.js');
+  const mounted = new Hono().route('/api', api);
+  return mounted.request('/api' + url, { method: body === undefined ? 'GET' : method, headers: { cookie: 'grokbot_session=test-cookie', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+};
+test('preferred name defaults to user and updates app context without altering the linked soul', async () => {
+  const before = fs.readFileSync(path.join(process.env.HERMES_HOME_PRIMARY, 'SOUL.md'));
+  db.prepare('UPDATE users SET name=? WHERE id=?').run('T3', 'u1');
+  const managedHome = path.join(process.env.ENGINES_DIR, 'bot_one');
+  fs.mkdirSync(managedHome, { recursive: true });
+  fs.writeFileSync(path.join(managedHome, 'SOUL.md'), 'You are bot_one. You work for T3 as one of a small team of AI agents, each with its own screen on a shared computer.\n\n\nYou are direct, warm and brief. You do the work rather than describe it, and you say plainly what you did and what you could not do.\n');
+  const initial = await settingsRequest('/preferences');
+  assert.equal(initial.status, 200);
+  assert.equal((await initial.json()).preferences.displayName, 'user');
+  assert.equal((await settingsRequest('/preferences', { displayName: 'Alex' })).status, 200);
+  const { instructionsFor } = await import('../server/dist/agent/prompt.js');
+  assert.match(await instructionsFor('u1', 'bot_one'), /Alex/);
+  assert.match(fs.readFileSync(path.join(managedHome, 'SOUL.md'), 'utf8'), /work for Alex/);
+  assert.deepEqual(fs.readFileSync(path.join(process.env.HERMES_HOME_PRIMARY, 'SOUL.md')), before);
+  await settingsRequest('/preferences', { displayName: '' });
+  assert.equal((await (await settingsRequest('/preferences')).json()).preferences.displayName, 'user');
+});
+test('each soul is isolated, rejects stale writes and survives profile edits', async () => {
+  const home = path.join(process.env.ENGINES_DIR, 'bot_one');
+  fs.mkdirSync(home, { recursive: true }); fs.writeFileSync(path.join(home, 'SOUL.md'), 'Original managed soul.');
+  const initial = await settingsRequest('/bots/bot_one/soul');
+  assert.equal(initial.status, 200);
+  const { soul } = await initial.json();
+  assert.equal(soul.text, 'Original managed soul.');
+  assert.equal((await settingsRequest('/bots/bot_two/soul')).status, 404);
+  const save = await settingsRequest('/bots/bot_one/soul', { text: 'My custom personality.', version: soul.version });
+  assert.equal(save.status, 200);
+  assert.equal((await settingsRequest('/bots/bot_one/soul', { text: 'Stale edit', version: soul.version })).status, 409);
+  await settingsRequest('/bots/bot_one', { name: 'Renamed Bot', label: 'Changed role' }, 'PATCH');
+  assert.equal(fs.readFileSync(path.join(home, 'SOUL.md'), 'utf8'), 'My custom personality.');
+  const primary = db.prepare("SELECT id FROM bots WHERE engine='primary'").get();
+  assert.equal((await (await settingsRequest(`/bots/${primary.id}/soul`)).json()).soul.text, 'The existing persona.');
+  assert.equal(fs.readFileSync(path.join(process.env.HERMES_HOME_PRIMARY, 'SOUL.md'), 'utf8'), 'The existing persona.');
 });

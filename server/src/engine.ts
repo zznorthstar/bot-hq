@@ -8,6 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
+import { displayNameFor } from './user-profile.js';
 import { desktopTempEnv } from './desktop-temp.js';
 
 /**
@@ -112,8 +113,7 @@ const SHARED_ENV = [
 /** Parts of the primary agent's config a managed agent starts from, so it reaches the same models. */
 const SHARED_CONFIG = ['model', 'providers', 'custom_providers', 'auxiliary', 'fallback_model', 'fallback_providers'];
 
-function soul(b: any): string {
-  const owner = (db.prepare('SELECT name FROM users WHERE id=?').get(b.user_id) as any)?.name ?? 'the user';
+function soul(b: any, owner = displayNameFor(b.user_id)): string {
   const role = b.label ? `, ${b.label}` : '';
   return [
     `You are ${b.name}${role}. You work for ${owner} as one of a small team of AI agents, each with its own screen on a shared computer.`,
@@ -126,10 +126,24 @@ function soul(b: any): string {
 /** Rewrite the persona file after a rename or a new description. The primary agent keeps its own. */
 export function syncPersona(botId: string) {
   const b = botRow(botId);
-  if (!b || b.engine !== 'managed') return;
+  if (!b || b.engine !== 'managed' || b.soul_custom) return;
   const home = homeFor(botId);
   if (!fs.existsSync(home)) return;
   fs.writeFileSync(path.join(home, 'SOUL.md'), soul(b));
+}
+
+/** Upgrade only known generated personas. Custom files and the linked primary soul stay untouched. */
+export function refreshGeneratedPersonas(userId: string, previousName?: string) {
+  const authName = (db.prepare('SELECT name FROM users WHERE id=?').get(userId) as { name: string } | undefined)?.name ?? 'user';
+  const bots = db.prepare("SELECT * FROM bots WHERE user_id=? AND engine='managed' AND soul_custom=0").all(userId) as any[];
+  for (const b of bots) {
+    const file = path.join(homeFor(b.id), 'SOUL.md');
+    if (!fs.existsSync(file) || !fs.lstatSync(file).isFile()) continue;
+    const text = fs.readFileSync(file, 'utf8');
+    const next = soul(b);
+    if (text === next) continue;
+    if (text === soul(b, authName) || text === soul(b, previousName ?? 'user') || text === soul(b, 'the user')) fs.writeFileSync(file, next);
+  }
 }
 
 function extraMcpServers(): Record<string, any> {
@@ -440,6 +454,7 @@ export async function removeEngine(botId: string): Promise<void> {
 
 /** On server start: give older bots an engine, then bring the managed gateways up. */
 export function initEngines() {
+  for (const user of db.prepare('SELECT id FROM users').all() as { id: string }[]) refreshGeneratedPersonas(user.id);
   fs.mkdirSync(env.enginesDir, { recursive: true });
   const bots = db.prepare("SELECT id, is_primary FROM bots WHERE engine IS NULL AND COALESCE(kind,'agent') <> 'room' AND COALESCE(hidden,0)=0 ORDER BY is_primary DESC, created_at ASC").all() as any[];
   for (const b of bots) assignEngine(b.id);

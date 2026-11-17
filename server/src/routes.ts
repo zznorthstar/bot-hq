@@ -20,6 +20,7 @@ import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
 import { chatMediaApi, messageAttachments } from './chat-media.js';
 import { localVoiceApi } from './local-voice.js';
+import { botSettingsApi } from './bot-settings.js';
 import { primaryApi } from './primary.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
@@ -484,3 +485,4 @@ api.route('/voice/local', localVoiceApi);
 api.route('/primary', primaryApi);
 api.route('/voice', voiceApi);
 api.route('/', chatMediaApi);
+api.route('/', botSettingsApi);

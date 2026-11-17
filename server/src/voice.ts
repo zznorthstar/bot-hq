@@ -1,3 +1,4 @@
+import { displayNameFor } from './user-profile.js';
 // Voice calls, the way Grok Bot does them: a second, lightweight voice agent runs in the browser against
 // the xAI realtime API, speaks as the bot, and relays real work to the bot's main text agent loop.
 // This module mints the ephemeral secret, builds the voice agent's prompt and tools, serves the relay
@@ -313,7 +314,7 @@ voiceApi.post('/tool', async (c) => {
       const row = appendRow(bot.id, 'message', { type: 'message', role: 'user', text: request, from });
       enqueue(bot.id, {
         type: 'user',
-        text: `[Voice call: ${String((db.prepare('SELECT name FROM users WHERE id=?').get(user.id) as any)?.name ?? 'the user').split(/\s+/)[0]} asked for this on a live voice call with you. Do the work, then reply in plain, short text with the outcome. Your reply is read aloud on the call, so lead with the answer and skip markdown, links and IDs unless asked.]\n${request}`,
+        text: `[Voice call: ${displayNameFor(user.id).split(/\s+/)[0]} asked for this on a live voice call with you. Do the work, then reply in plain, short text with the outcome. Your reply is read aloud on the call, so lead with the answer and skip markdown, links and IDs unless asked.]\n${request}`,
       });
       call?.tasks.push(clip(request, 200));
       return c.json({ output: 'Handed off. You are working on it now; the result will arrive as a [work_landed] note. Tell the user briefly that you are on it (unless you already did), then wait.', taskSeq: row.seq });

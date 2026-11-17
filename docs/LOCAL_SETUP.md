@@ -126,6 +126,14 @@ are shared across bots; each bot chooses its voice. The backend routes under
 `/api/voice/local` provide setup, status, warm-up, transcription and speech. The original
 Bot HQ web frontend keeps its existing optional xAI voice client.
 
+The T3 composer has separate icon controls for local dictation and live calls.
+Dictation transcribes into an editable draft without sending a message.
+The global preferred name is under T3 Settings → General → Bots and defaults
+to `user`, independently of the login name. Bot settings expose each real
+SOUL.md file; explicit saves keep a private prior version and reject stale writes.
+Custom souls survive profile edits, and linking or upgrading does not rewrite
+the personal agent’s existing soul.
+
 The T3 composer also supports owned file attachments and uploaded avatars. Images and
 text are supplied to Hermes; other originals remain in the bot library. The
 `read_uploaded_file` MCP tool lets a Docker or Discord agent retrieve an upload by ID.

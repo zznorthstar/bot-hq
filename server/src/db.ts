@@ -143,6 +143,8 @@ function addColumn(table: string, col: string, ddl: string) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
   if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
 }
+addColumn('users', 'display_name', "TEXT NOT NULL DEFAULT 'user'");
+addColumn('bots', 'soul_custom', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('bots', 'voice', "TEXT NOT NULL DEFAULT 'luna'");
 addColumn('bots', 'avatar_data', 'TEXT');
 addColumn('bots', 'avatar_version', 'TEXT');

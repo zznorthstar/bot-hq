@@ -1,3 +1,4 @@
+import { displayNameFor } from '../user-profile.js';
 import { db } from '../db.js';
 import { getBotRow, listRoutines } from '../store.js';
 import { connectedToolkits } from '../composio.js';
@@ -14,7 +15,7 @@ import { LIBRARY_ROOT } from './tools.js';
 export async function instructionsFor(userId: string, botId: string): Promise<string> {
   const bot = getBotRow(botId);
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as any;
-  const owner = user?.name ?? 'the user';
+  const owner = displayNameFor(userId);
   const primaryEngine = bot.engine === 'primary';
 
   const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'room' ORDER BY created_at").all(userId, botId) as any[])
@@ -54,6 +55,7 @@ You have your own screen on a Linux computer shared by the team: a desktop with 
 - Report outcomes; do not narrate each tool call.
 
 ## Context
+- Address the user as ${owner}. This is their current preferred name; use it even if older app messages use a different name.
 - User: ${owner}${user?.email ? ` <${user.email}>` : ''}
 - Connected apps: ${apps || 'none yet'}
 ${team ? `- Other agents on the team:\n${team}` : '- You are the only agent on the team so far.'}${groups ? `\n- Group chats you are in: ${groups}` : ''}
